@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FRAME OF SOUND — Download</title>
+<!--
+  ▸ หน้า /download?id=... : เปิดจาก QR ที่สร้างในแอป
+    - โหมด firebase : ตั้งค่า BACKEND.firefig.. ให้เหมือน index.html → อ่าน Firestore
+      แล้วไปดึงรูปจาก Storage ผ่าน image_url
+    - โหมด supabase : กดดึงผ่าน REST /rest/v1/photos?id=eq.<id>
+    - โหมด local    : อ่าน IndexedDB ของเครื่องนี้ (key = fos_shot_<id>)
+  ⚠️ ค่า CONFIG ต้องตรงกับ BACKEND ใน index.html เสมอ
+-->
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Kanit:wght@400;700;900&display=swap" rel="stylesheet" />
+<style>
+  body { font-family:'Kanit',sans-serif; }
+  .display { font-family:'Archivo Black',sans-serif; }
+  .btn { min-height:44px; display:inline-flex; align-items:center; justify-content:center;
+         font-weight:700; border-radius:.9rem; }
+</style>
+</head>
+<body class="min-h-screen text-neutral-100" style="background:radial-gradient(900px 600px at 50% -10%, #3b1e7a 0%, #241052 50%, #14082e 100%)">
+
+<div class="mx-auto max-w-md px-5 py-12">
+  <a href="./" class="text-[11px] tracking-[.35em] opacity-70">← FRAME OF SOUND</a>
+  <h1 class="display text-3xl mt-2">DOWNLOAD <span style="color:#ffe14d">SHOT</span></h1>
+
+  <div id="status" class="mt-8 text-center text-sm opacity-70">กำลังค้นหารูป…</div>
+
+  <div id="card" class="mt-4 hidden rounded-3xl border-4 border-black bg-white/5 p-4">
+    <div class="grid place-items-center rounded-xl bg-black/40 p-3">
+      <img id="photo" alt="ภาพจากแอป" class="max-w-full max-h-[70vh] rounded-lg" />
+    </div>
+    <div class="mt-3 flex items-center justify-between">
+      <div>
+        <p id="pName" class="font-black text-lg"></p>
+        <p id="pBand" class="text-[11px] opacity-60"></p>
+      </div>
+      <span id="pGenre" class="text-[10px] font-bold px-3 py-1 rounded-full bg-white/10"></span>
+    </div>
+    <button id="btnDl" class="btn w-full mt-4 text-lg" style="background:#ffe14d;color:#121116;box-shadow:0 6px 0 #000">Download รูปของเธอ</button>
+  </div>
+
+  <p class="mt-8 text-center text-[11px] opacity-50" id="modeNote">สแกนจากทุกเครื่องได้ — รูปเก็บบนคลาวด์</p>
+</div>
+
+<script>
+/* ⚠️ ค่าเดียวกันกับ BACKEND ใน index.html */
+const BACKEND = {
+  mode: 'local',            // auto-detect: เปิดบน freebuff.page จะใช้โหมด Worker อัตโนมัติ
+  firebase: { apiKey: '', projectId: '', storageBucket: '' },
+  supabase: { url: '', key: '' },
+  worker: { base: '' }      // เว้นว่าง = ใช้ origin เดียวกับหน้า
+};
+
+const id = new URLSearchParams(location.search).get('id');
+/* auto-detect: รันบนโดเมน Sites → ใช้ Worker API / รันอื่น → ตามค่า mode ด้านล่าง */
+const IS_SITES = /freebuff\.page$/i.test(location.hostname);
+const USE_WORKER_API = IS_SITES || BACKEND.mode === 'worker';
+const WORKER_BASE = BACKEND.worker.base || location.origin;
+const autoDl = new URLSearchParams(location.search).get('auto') === '1';   // สแกน QR → เริ่มเซฟให้เองทันที
+if (!USE_WORKER_API) document.getElementById('modeNote').textContent = 'local mode: ลิงก์ใช้ได้เฉพาะเบราว์เซอร์เดียวกับที่ถ่าย (IndexedDB เครื่องนี้)';
+const statusEl = document.getElementById('status');
+
+/* ── IndexedDB (โหมด local) ───────────────────────────── */
+function idbOpen(){ return new Promise((res, rej) => {
+  const r = indexedDB.open('fos', 1);
+  r.onupgradeneeded = e => { e.target.result.createObjectStore('photos'); };
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbGet(k){ const db = await idbOpen(); return new Promise((res, rej) => {
+  const rq = db.transaction('photos').objectStore('photos').get(k);
+  rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); }
+
+/* ── backend REST ────────────────────────────────────── */
+async function firebaseGet(){
+  if (!BACKEND.firebase.projectId) throw new Error('ยังไม่ตั้งค่า firebase');
+  const { apiKey, projectId } = BACKEND.firebase;
+  const u = 'https://firestore.googleapis.com/v1/projects/' + projectId +
+            '/databases/(default)/documents/photos/' + encodeURIComponent(id) + '?key=' + apiKey;
+  const r = await fetch(u);
+  if (!r.ok) throw new Error('firestore ' + r.status);
+  const f = (await r.json()).fields || {};
+  const g = x => (x && (x.stringValue || x.integerValue || x.doubleValue)) || '';
+  return { src: g(f.image_url), name: g(f.name), band: g(f.band), genre: g(f.genre) };
+}
+async function supabaseGet(){
+  if (!BACKEND.supabase.url) throw new Error('ยังไม่ตั้งค่า supabase');
+  const { url, key } = BACKEND.supabase;
+  const r = await fetch(url + '/rest/v1/photos?id=eq.' + encodeURIComponent(id) + '&select=*',
+    { headers: { apikey: key, Authorization: 'Bearer ' + key } });
+  if (!r.ok) throw new Error('supabase ' + r.status);
+  const d = (await r.json())[0] || {};
+  return { src: d.image_url, name: d.name, band: d.band, genre: d.genre };
+}
+
+function meta(url){ try { return JSON.parse(localStorage.getItem('fos_wall_v1') || '[]').find(e => e.id === id) || null; } catch(e){ return null; } }
+
+async function run(){
+  try {
+    if (!id) throw new Error('ไม่มี id ในลิงก์');
+    let rec = null;
+    if (USE_WORKER_API){
+      /* Sites: ดึง meta จาก /api/photo — ถ้าไม่มีในคลาวด์ (404) จะ fallback IDB ด้านล่าง */
+      try {
+        const r = await fetch(WORKER_BASE + '/api/photo?id=' + encodeURIComponent(id));
+        if (r.ok){
+          const d = await r.json();
+          rec = { src: WORKER_BASE + d.url, name: d.name, band: d.band, genre: d.genre };
+        }
+      } catch(e){ /* ออฟไลน์ชั่วคราว — ลอง IDB ต่อ */ }
+    }
+    if (!rec){
+      const data = await idbGet('fos_shot_' + id);
+      if (!data){
+        document.getElementById('modeNote').textContent = '';
+        throw new Error('รูปนี้ถ่ายก่อนอัปเกรดระบบ จึงไม่มีในคลาวด์ — เปิดลิงก์นี้บนเครื่อง/เบราว์เซอร์ที่เคยถ่าย หน้านี้จะยกรูปขึ้นคลาวด์ให้อัตโนมัติ');
+      }
+      const m = meta(id);
+      rec = { src: data, name: (m && m.name) || '', band: (m && m.band) || '', genre: (m && m.genre) || '' };
+
+      /* ═ AUTO-RESCUE: พบรูปเก่าในเครื่องนี้ → ฝากขึ้นคลาวด์ด้วย id เดิม
+         จากนี้ QR เดิมจะใช้ได้ข้ามเครื่องทุกตัว */
+      if (USE_WORKER_API){
+        statusEl.textContent = 'พบรูปในเครื่องนี้ — กำลังอัปโหลดขึ้นคลาวด์เพื่อให้สแกนได้ทุกเครื่อง…';
+        try {
+          const blob = await windowRescueBlob(data);           // dataURL → blob (สลายเต็มแบบ Image+canvas)
+          const fd = new FormData();
+          fd.append('file', blob, id + '.jpg');
+          fd.append('id', id);
+          fd.append('name', rec.name || '—');
+          fd.append('band', rec.band || '—');
+          fd.append('genre', rec.genre || '—');
+          const r = await fetch(WORKER_BASE + '/api/upload', { method: 'POST', body: fd });
+          if (r.ok){
+            const d = await r.json();
+            rec.src = WORKER_BASE + d.url;
+            statusEl.textContent = 'อัปโหลดขึ้นคลาวด์สำเร็จ — สแกน QR นี้ได้ทุกเครื่องแล้ว';
+            setTimeout(() => { statusEl.textContent = ''; }, 6000);
+          } else {
+            statusEl.textContent = 'อัปโหลดไม่สำเร็จ (' + r.status + ') — ยังดู/เซฟรูปจากเครื่องนี้ได้ปกติ';
+            setTimeout(() => { statusEl.textContent = ''; }, 6000);
+          }
+        } catch(e){
+          statusEl.textContent = 'อัปโหลดไม่สำเร็จ (ออฟไลน์?) — ยังดู/เซฟรูปจากเครื่องนี้ได้ปกติ';
+          setTimeout(() => { statusEl.textContent = ''; }, 6000);
+        }
+      }
+    }
+    if (!rec.src) throw new Error('รูปหาย');
+    document.getElementById('photo').src = rec.src;
+    document.getElementById('pName').textContent = rec.name || '—';
+    document.getElementById('pBand').textContent = rec.band || '';
+    document.getElementById('pGenre').textContent = (rec.genre || '').toUpperCase();
+    document.getElementById('card').classList.remove('hidden');
+    document.getElementById('card').classList.add('block');
+    // หมายเหตุ: ไม่เคลียร์ status ทันที เพื่อให้ข้อความ auto-rescue แสดงครบ
+    const _didRescue = rec.src && rec.src.startsWith('data:');
+
+    document.getElementById('btnDl').onclick = doDownload;
+
+    async function doDownload(){
+      statusEl.textContent = 'กำลังเตรียมไฟล์…';
+      const blob = await (await fetch(rec.src)).blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'frame-of-sound-' + id + '.jpg';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      statusEl.textContent = 'เซฟรูปเรียบร้อยแล้ว ตรวจดูในแกลเลอรี/โฟลเดอร์ดาวน์โหลด';
+      setTimeout(() => { statusEl.textContent = ''; }, 4000);
+    }
+
+    /* dataURL → blob แบบที่ทำงานได้ทุกเว็บวิว (fetch(data:) พังบางเครื่อง) */
+    function windowRescueBlob(dataURL){
+      return new Promise((res, rej) => {
+        const img = new Image();
+        img.onload = () => {
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.getContext('2d').drawImage(img, 0, 0);
+          c.toBlob(b => b ? res(b) : rej(new Error('toBlob null')), 'image/jpeg', 0.92);
+        };
+        img.onerror = () => rej(new Error('รูปในเครื่องไม่อ่านได้'));
+        img.src = dataURL;
+      });
+    }
+
+    /* แสกน QR (auto=1) → เริ่มบันทึกให้เองทันที — ถ้าเบราว์เซอร์บล็อก auto-download
+       ก็ยังเหลือปุ่ม Download ให้กดเองอีกชั้น */
+    if (autoDl){
+      statusEl.textContent = 'กำลังเซฟรูปให้อัตโนมัติ…';
+      try { await doDownload(); }
+      catch(e){ statusEl.textContent = 'เซฟอัตโนมัติไม่สำเร็จ - กดปุ่ม Download ด้านล่างได้เลย'; }
+    }
+  } catch (e){
+    statusEl.textContent = 'โหลดรูปไม่ได้: ' + e.message;
+  }
+}
+run();
+</script>
+</body>
+</html>

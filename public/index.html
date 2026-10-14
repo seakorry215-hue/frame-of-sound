@@ -1,0 +1,1440 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>FRAME OF SOUND — Music Persona Photo Booth</title>
+
+<!--
+  ══════════════════════════════════════════════════════════════════
+  FRAME OF SOUND — Music Persona Photo Booth (mobile-first, 390px)
+  HTML + Tailwind CDN + Vanilla JS · static hosting friendly
+  ══════════════════════════════════════════════════════════════════
+
+  ⚙️ คำแนะนำการตั้งค่า STORAGE / BACKEND (โฟลว์ 3c + 4)
+
+  โหมดเริ่มต้น = 'local'  : เก็บรูปเต็มใน IndexedDB เบราว์เซอร์นี้,
+    วอลล์ + QR ใช้ได้เฉพาะเครื่อง/เบราว์เซอร์เดียวกัน (ฝึกซ้อม/demo)
+
+  ▸ โหมด 'firebase' (ลิงก์สาธารณะจริง เปิด cross-device ได้):
+    1) สร้างโปรเจกต์ Firebase → เปิด Storage + Firestore
+    2) กติกา Storage ให้อ่าน+เขียนแบบ public:
+        allow read: if true;  allow write: if true;   // demo เท่านั้น — เติม rule จริงทีหลัง
+    3) กติกา Firestore collection "photos": อ่าน/เขียน public (demo)
+    4) แก้ค่า BACKEND CONFIG ด้านล่าง:
+         mode: 'firebase', firebase: { apiKey, projectId }
+       (storageBucket ใช้ค่า default: <projectId>.appspot.com /
+        หรือระบุเองถ้าใช้ bucket อื่น)
+    5) upload จะยิงไป Storage แล้วลง Firestore อัตโนมัติ
+       QR จะชี้ไปที่ URL ภาพสาธารณะจริง
+
+  ▸ โหมด 'supabase':
+    1) สร้างโปรเจกต์ Supabase → สร้าง bucket "shots" (public)
+    2) SQL: create table photos (
+         id text primary key, name text, band text, genre text,
+         created_at timestamptz default now(), image_url text );
+       เปิด RLS + policy อ่าน/เขียนแบบ anon (demo)
+    3) แก้ค่า BACKEND CONFIG ด้านล่าง:
+         mode: 'supabase', supabase: { url, key(anon public) }
+
+  ▸ หน้า download.html จะค้นรูปจาก backend ก่อน แล้วค่อย fallback
+    ไป IndexedDB ของเครื่อง (โหมด local)
+═══════════════════════════════════════════════════════════════════
+-->
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Kanit:ital,wght@0,300;0,400;0,600;0,900;1,600&display=swap" rel="stylesheet" />
+
+<style>
+  :root { --p:44px; }
+  html { -webkit-tap-highlight-color: transparent; }
+  body { font-family:'Kanit', ui-sans-serif, system-ui, sans-serif; }
+  .display { font-family:'Archivo Black','Kanit',sans-serif; letter-spacing:.02em; }
+
+  .screen-scroll { overflow-y:auto; scrollbar-width:none; }
+  .screen-scroll::-webkit-scrollbar { display:none; }
+
+  /* ปุ่มหลัก — สูงอย่างน้อย 44px */
+  .btn { min-height:44px; display:inline-flex; align-items:center; justify-content:center;
+         font-weight:700; border-radius:.9rem; user-select:none; transition:transform .08s, filter .15s; }
+  .btn:active { transform:scale(.96); }
+  .btn:disabled { opacity:.4; filter:grayscale(1); }
+  .btn-dark  { background:#121116; color:#fff; border:2px solid #fff; }
+  .btn-yellow{ background:#ffe14d; color:#121116; border:2px solid #121116; }
+  .btn-blue  { background:#2d7ff9; color:#fff;   border:2px solid #121116; }
+
+  /* ธีมแนวเพลง */
+  .theme-pop    body, body.theme-pop { background:#1b2340; }
+  .theme-pop   .accent  { color:#ffe14d; }
+  .theme-indie .accent  { color:#87970f; }
+  .theme-rnb   .accent  { color:#ff8a7a; }
+
+  body.theme-pop    { background:radial-gradient(1200px 700px at 50% -10%, #2d50c9 0%, #17204a 45%, #0f1230 100%); }
+  body.theme-indie  { background:radial-gradient(1000px 600px at 20% -10%, #d9d9b7 0%, #c7c69b 40%, #7c8433 100%); }
+  body.theme-rnb    { background:radial-gradient(1100px 700px at 50% -10%, #7e0e2e 0%, #4b0719 55%, #26030f 100%); }
+  body.theme-mix    { background:radial-gradient(1100px 700px at 50% -10%, #3b1e7a 0%, #241052 50%, #14082e 100%); }
+
+  .sticker { display:inline-block; padding:2px 10px; border-radius:9999px;
+             font-weight:900; border:2px solid #121116; }
+
+  .ticket-edge { border:2px dashed #12111640; }
+
+  .glow-red { text-shadow:0 0 12px #ff4d63, 0 0 34px rgba(255,77,99,.65), 0 0 60px rgba(255,77,99,.35); }
+
+  .marquee { display:flex; gap:2rem; animation:marq 18s linear infinite; white-space:nowrap; }
+  @keyframes marq { from { transform:translateX(0);} to { transform:translateX(-50%);} }
+
+  .flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:80; }
+  .flash.go { animation:flashA .45s ease-out; }
+  @keyframes flashA { 0%{opacity:.95} 100%{opacity:0} }
+
+  .countdown { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+               font-size:9rem; font-weight:900; color:#fff; text-shadow:0 6px 30px #000a; z-index:70; }
+
+  .vw-wrap { position:relative; border-radius:1.25rem; overflow:hidden; }
+  .vw-wrap video { width:100%; height:420px; object-fit:cover; display:block; transform:scaleX(var(--mirror,1)); }
+
+  /* พิมพ์ Mockup กระดาษ 4x6 นิ้ว */
+  #printArea { display:none; }
+  @media print {
+    body > :not(#printArea) { display:none !important; }
+    #printArea { display:block !important; position:static; width:4in; height:6in; background:#fff; }
+    #printArea img { width:100%; height:100%; object-fit:contain; background:#fff; }
+    @page { size: 4in 6in; margin: 0.2in; }
+  }
+
+  /* ระยะเวลา transition ของหน้าจอ */
+  .screen { animation:fadeIn .35s ease; }
+  @keyframes fadeIn { from{opacity:0; transform:translateY(8px)} to{opacity:1; transform:none} }
+
+  .chip { padding:2px 10px; border-radius:999px; font-size:.72rem; font-weight:700; }
+
+  input[type="range"] { accent-color:#ffe14d; height:32px; }
+
+  .lace { background-image:radial-gradient(circle at 50% 100%, transparent 68%, rgba(255,138,122,.18) 70%); background-size:56px 28px; }
+
+  /* ══ หน้าแรก: พื้นหลังภาพวงที่กำลังเล่น (ฟังเพลงวงไหน รูปวงนั้นจางเป็นพื้น) ══ */
+  #homeBg { position:fixed; inset:0; z-index:-1; overflow:hidden; background:#0e0e12; }
+  #homeBg img { position:absolute; inset:-6%; width:112%; height:112%; object-fit:cover;
+    filter:blur(32px) saturate(1.18) brightness(.52); transform:scale(1.05);
+    opacity:0; transition:opacity 1.4s ease; will-change:opacity; }
+  #homeBg img.on { opacity:1; }
+  #homeBg .homeTint { position:absolute; inset:0;
+    background:linear-gradient(to top, rgba(8,8,12,.82) 0%, rgba(8,8,12,.12) 46%, rgba(8,8,12,.38) 100%); }
+
+  /* ฮีโร่ แบบโปสเตอร์คอนเสิร์ต (ตัดกันอย่างพิมพ์รีสต์) */
+  .homeTitle { font-family:'Archivo Black','Kanit',sans-serif; line-height:1.04;
+    display:flex; flex-direction:column; align-items:center; }
+  .homeTitle .lt { font-size:54px; color:#fff; text-shadow:0 6px 0 rgba(0,0,0,.45), 0 0 46px rgba(0,0,0,.3); }
+  .homeTitle .mx { font-size:24px; letter-spacing:.66em; margin-left:.66em; color:rgba(255,255,255,.92); }
+  .homeTitle .hot { color:#ffe14d; }
+  .tapeLine { height:0; border-top:2px solid rgba(255,255,255,.32); }
+  .axisCross { display:flex; gap:14px; }
+  .axisCross span { width:7px; height:7px; background:#ffe14d; border:1.5px solid #121116;
+    transform:rotate(45deg); display:inline-block; }
+  .axisCross span:nth-child(2){ transform:rotate(45deg) scale(.68); opacity:.55; }
+  .tickWord { position:absolute; font-family:'Archivo Black','Kanit',sans-serif; pointer-events:none;
+    text-shadow:1px 2px 0 rgba(0,0,0,.6); }
+  .tickWord.m { font-size:28px; color:rgba(255,255,255,.17); transform:rotate(24deg); }
+  .tickWord.d { font-size:19px; color:rgba(255,225,77,.3); transform:rotate(-13deg); }
+
+  /* แผ่นเสียง — ป้ายกลางคือรูปวงที่กำลังเล่น */
+  .vinylWrap { position:relative; width:168px; height:168px; border-radius:9999px;
+    border:4px solid #0a0a0a; overflow:hidden; background:#0a0a0a;
+    box-shadow:0 14px 40px rgba(0,0,0,.55); }
+  .vinylWrap img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  .vinylRings { position:absolute; inset:0; border-radius:9999px;
+    background:repeating-radial-gradient(circle, transparent 0 7px, rgba(0,0,0,.32) 7px 8.5px); }
+  .vinylWrap .sheen { position:absolute; inset:0; border-radius:9999px;
+    background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.16) 0%, transparent 55%); }
+  .vinylHole { position:absolute; width:44px; height:44px; left:calc(50% - 22px); top:calc(50% - 22px);
+    border-radius:9999px; background:#0a0a0a; border:3px solid #ffe14d; }
+
+  /* แถบ NOW PLAYING แบบกลางแจ้ง */
+  .nowBar { display:flex; align-items:center; gap:12px; border-radius:1.1rem;
+    border:1.5px solid rgba(255,255,255,.22); background:rgba(12,12,16,.72);
+    padding:10px 14px; backdrop-filter:blur(8px); }
+</style>
+</head>
+
+<body class="theme-mix text-neutral-100 min-h-screen antialiased overflow-x-hidden">
+
+<audio id="bgm" preload="auto"></audio>
+<div class="flash" id="flash"></div>
+
+<!-- █████ หน้า 0 · HOME █████ -->
+<section id="scr-home" class="screen min-h-screen flex flex-col">
+
+  <!-- พื้นหลังภาพวงที่กำลังเล่น (เบลอ) -->
+  <div id="homeBg" aria-hidden="true">
+    <img id="homeBgA" alt="" />
+    <img id="homeBgB" alt="" />
+    <div class="homeTint"></div>
+  </div>
+
+  <!-- รายชื่อวง วิ่งด้านบน -->
+  <div class="overflow-hidden border-b border-white/15 py-1.5">
+    <div class="marquee text-[10px] font-semibold tracking-[.25em] text-white/55">
+      <span></span><span id="marqA"></span>
+    </div>
+  </div>
+
+  <div class="flex-1 flex flex-col items-center justify-center px-6 text-center relative" style="min-height:78vh">
+    <!-- คำโปรยแต่งมุม แบบโปสเตอร์คอนเสิร์ต -->
+    <span class="tickWord m" style="top:7%;  left:5%">LIVE</span>
+    <span class="tickWord d" style="top:16%; right:7%">11 BANDS</span>
+    <span class="tickWord d" style="bottom:23%; left:4%">3 GENRES</span>
+    <span class="tickWord m" style="bottom:30%; right:4%">REC ●</span>
+
+    <div class="axisCross mb-4">
+      <span></span><span></span><span></span>
+    </div>
+    <p class="text-[10px] tracking-[.5em] text-white/55 mb-3">MUSIC PERSONA PHOTO BOOTH</p>
+
+    <!-- ตัวลายชื่อ แบบมาสเตอร์เฟส → SOUND (สีเหลือง) -->
+    <h1 class="homeTitle display">
+      <span class="lt">FRAME</span>
+      <span class="mx">OF</span>
+      <span class="lt hot">SOUND</span>
+    </h1>
+
+    <div class="tapeLine mt-5 w-56"></div>
+    <p class="mt-2 text-[11px] text-white/60 font-semibold tracking-wider">
+      3 ARTISTS · SPINNING VINYL · 11 วง · 3 แนว
+    </p>
+
+    <!-- แผ่นเสียงหมุน — ป้ายกลางสลับเป็นรูปวงที่เล่นอยู่ -->
+    <div class="mt-7 relative" id="vinylSpinWrap">
+      <div class="vinylWrap" id="vinyl" style="animation:spin 3.4s linear infinite paused">
+        <img id="vinylImg" alt="" class="opacity-0 transition-opacity duration-700" />
+        <div class="vinylRings"></div>
+        <div class="sheen"></div>
+        <div class="vinylHole"></div>
+      </div>
+    </div>
+    <p class="mt-3 text-[11px] text-white/55 font-semibold" id="homeBandTag">ตอนนี้ฟังมุมมองอะไรก็ได้</p>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+
+    <button id="btnStart" class="btn btn-yellow mt-8 w-full max-w-xs text-lg shadow-[0_8px_0_#000]">
+      เริ่มสแกนวิบ (Scan Your Vibe)
+    </button>
+    <button id="btnGoFame0" class="btn btn-dark mt-3 w-full max-w-xs">
+      Wall of Fame
+    </button>
+    <p class="mt-4 text-[11px] text-white/50">แตะครั้งแรกเพื่อเปิดเพลงพื้นหลัง (สุ่มจากคลังรวม)</p>
+  </div>
+
+  <!-- แถบ NOW PLAYING -->
+  <div class="px-5 pb-6">
+    <div class="nowBar">
+      <span class="text-[10px] tracking-widest text-white/45 shrink-0">NOW PLAYING<br/>· random mix</span>
+      <div class="h-8 w-px bg-white/15"></div>
+      <div class="flex-1 truncate text-sm font-semibold" id="trackTitle">— กดเพื่อเปิดเพลง —</div>
+      <button id="btnMute" class="text-2xl w-[44px] h-[44px] flex items-center justify-center" aria-label="ปิด/เปิดเสียง">🔊</button>
+    </div>
+  </div>
+</section>
+
+<!-- █████ หน้า 1 · SCAN YOUR VIBE (MBTI) █████ -->
+<section id="scr-quiz" class="screen hidden min-h-screen flex flex-col px-6 py-8">
+  <div class="flex items-center justify-between">
+    <h2 class="display text-2xl">SCAN YOUR VIBE</h2>
+    <div id="dots" class="flex gap-1.5"></div>
+  </div>
+  <p class="mt-2 text-sm text-white/70 font-medium">ตอบ <b>6 ข้อ</b> (ข้อละ 3 ตัวเลือก) — โอกาสโดนแนวอื่นมีมากขึ้น</p>
+
+  <div class="flex-1 flex flex-col justify-center">
+    <div class="bg-black/55 border-2 border-white/25 rounded-3xl p-6 text-center backdrop-blur">
+      <p class="text-[11px] tracking-[.3em] text-white/50" id="qStep">คำถาม 1/6</p>
+      <h3 class="mt-2 text-xl font-bold leading-snug" id="qText"></h3>
+      <div class="mt-6 grid gap-3">
+        <button id="optA" class="btn btn-dark text-left leading-snug"></button>
+        <button id="optB" class="btn btn-dark text-left leading-snug"></button>
+        <button id="optC" class="btn btn-dark text-left leading-snug"></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sticky bottom-4 grid gap-2">
+    <button id="btnQuizNext" class="btn btn-yellow text-lg shadow-[0_6px_0_#000]" disabled>ถัดไป →</button>
+  </div>
+</section>
+
+<!-- █████ หน้า 2 · MEET YOUR SOUND █████ -->
+<section id="scr-meet" class="screen hidden min-h-screen px-5 py-6 flex flex-col">
+  <p class="text-[11px] tracking-[.35em] text-white/60">MEET YOUR SOUND · วงของเธอ</p>
+  <h2 class="display text-[30px] leading-tight mt-1" id="bandTitle">—</h2>
+
+  <!-- band photo ซ้าย / ขวา + ช่องรูปผู้ใช้ตรงกลาง -->
+  <div class="mt-4 grid grid-cols-3 gap-2 items-stretch">
+    <div class="rounded-2xl overflow-hidden border-2 border-black bg-black/30 aspect-[3/4]" id="bandImgL"></div>
+    <div class="rounded-2xl overflow-hidden border-2 border-black bg-black/30 aspect-[3/4] grid place-items-center relative" id="userSlot">
+      <div class="text-center px-2 py-6">
+        <div class="text-4xl">🫥</div>
+        <p class="mt-2 text-[10px] font-bold leading-tight">รูปของเธอมาจอง<br/>(มันคือเธอ!!)</p>
+      </div>
+    </div>
+    <div class="rounded-2xl overflow-hidden border-2 border-black bg-black/30 aspect-[3/4]" id="bandImgR"></div>
+  </div>
+
+  <div class="mt-3 bg-black/55 border-2 border-white/25 rounded-2xl px-4 py-3 backdrop-blur">
+    <p class="text-[10px] tracking-widest text-white/50">กำลังเล่นจากวงนี้ · เล่นวน</p>
+    <p class="text-sm font-semibold truncate mt-0.5" id="bandTrackName">—</p>
+  </div>
+
+  <div class="flex-1"></div>
+  <button id="btnToBooth" class="btn btn-yellow text-lg shadow-[0_6px_0_#000]">เลือกกรอบ & ถ่ายรูป</button>
+  <button id="btnBackHome1" class="btn btn-dark mt-2 mb-4">← กลับหน้าแรก</button>
+</section>
+
+<!-- █████ หน้า 3 · BOOTH (3a เลือกกรอบ+ถ่าย / 3b ฟิลเตอร์ / 3c ผลลัพธ์+QR) █████ -->
+<section id="scr-booth" class="screen hidden min-h-screen px-5 py-6 flex flex-col">
+  <div class="flex items-center justify-between">
+    <h2 class="display text-2xl" id="boothHead">PHOTO BOOTH</h2>
+    <span class="chip bg-black/50 border border-white/25" id="bandChip">—</span>
+  </div>
+
+  <!-- แท็บสไตล์กรอบ -->
+  <div id="styleTabs" class="mt-3 grid grid-cols-3 gap-2"></div>
+
+  <!-- ══ 3a Capture ══ -->
+  <div id="stepCapture" class="mt-4 flex-1 flex flex-col">
+    <div class="vw-wrap border-4 border-black bg-black" style="min-height:380px">
+      <video id="vid" autoplay playsinline muted></video>
+      <div id="camFallback" class="hidden absolute inset-0 grid place-items-center text-center p-6 bg-neutral-900">
+        <div><p class="text-4xl font-black tracking-widest">CAM</p><p class="mt-2 text-sm font-semibold">เปิดกล้องไม่สำเร็จ<br/></p><p class="text-[11px] text-white/60 mt-1">ให้สิทธิ์กล้อง หรือกด "อัปโหลดรูป" แทนได้</p></div>
+      </div>
+    </div>
+    <p class="mt-2 text-center text-xs font-semibold" id="shotCounter">—</p>
+    <div class="mt-2 grid grid-cols-3 gap-2">
+      <label class="btn btn-dark cursor-pointer" aria-label="อัปโหลดรูปจากเครื่อง"><span class="text-[11px]">UPLOAD</span>
+        <input id="fileInput" type="file" accept="image/*" class="hidden" />
+      </label>
+      <button id="btnFlip" class="btn btn-dark" aria-label="สลับกล้องหน้า/หลัง"><span class="text-[11px]">FLIP</span></button>
+      <button id="btnShoot" class="btn btn-blue" aria-label="ถ่ายรูป"><span class="text-[11px]">SHOOT</span></button>
+    </div>
+    <div class="flex-1"></div>
+    <div id="thumbRow" class="flex gap-2 overflow-x-auto mt-2 pb-1"></div>
+    <button id="btnToFilter" class="btn btn-yellow mt-3 text-lg shadow-[0_6px_0_#000] mb-4" disabled>ถัดไป: ตกแต่ง →</button>
+  </div>
+
+  <!-- ══ 3b Filter ══ -->
+  <div id="stepFilter" class="mt-4 hidden flex-1 flex-col">
+    <div class="rounded-2xl overflow-hidden border-4 border-black bg-[#ffe14d] grid place-items-center" style="min-height:340px">
+      <canvas id="livePreview" class="max-w-full block" style="max-height:56vh"></canvas>
+    </div>
+    <div class="mt-3 flex items-center gap-3 bg-black/55 border-2 border-white/25 rounded-2xl px-4 py-2">
+      <span class="text-xs font-bold whitespace-nowrap">ความเข้ม</span>
+      <input id="intensity" type="range" min="0" max="100" value="60" class="flex-1" aria-label="ความเข้มฟิลเตอร์" />
+      <span class="text-xs font-bold w-8 text-right" id="intensityVal">60</span>
+    </div>
+    <div id="filterRow" class="mt-3 flex gap-2 overflow-x-auto pb-1"></div>
+    <div class="flex-1"></div>
+    <div class="grid grid-cols-2 gap-2 mb-4">
+      <button id="btnBackCapture" class="btn btn-dark">← ถ่ายใหม่</button>
+      <button id="btnToResult" class="btn btn-yellow shadow-[0_6px_0_#000]">ถัดไป: ผลลัพธ์ →</button>
+    </div>
+  </div>
+
+  <!-- ══ 3c Result + QR ══ -->
+  <div id="stepResult" class="mt-4 hidden flex-1 flex-col">
+    <div class="grid gap-4 place-items-center rounded-2xl border-4 border-black bg-gradient-to-b from-white/10 to-black/40 p-4">
+      <img id="finalImg" alt="ภาพสุดท้ายของเธอ" class="max-w-full max-h-[46vh] rounded-lg shadow-2xl" />
+      <div id="qrCard" class="hidden items-center gap-3 bg-white/95 rounded-xl p-3 border-2 border-black">
+        <div id="qrBox" class="w-[104px] h-[104px] grid place-items-center bg-white"></div>
+        <div class="text-[#121116] text-xs font-semibold leading-snug">
+          <p class="text-sm font-black">SCAN ME</p>สแกนเพื่อโหลดรูป<br/><span class="text-[10px] opacity-60" id="qrNote"></span>
+        </div>
+      </div>
+    </div>
+
+    <label class="mt-4 block text-xs font-bold">ชื่อผู้เล่น (จำเป็น *</label>
+    <input id="playerName" type="text" maxlength="20" placeholder="พิมพ์ชื่อ / นามเล่น"
+           class="mt-1 w-full rounded-xl border-2 border-black bg-white text-neutral-900 px-4 py-3 font-semibold outline-none" />
+
+    <div class="mt-3 grid grid-cols-2 gap-2">
+      <button id="btnSaveQR" class="btn btn-yellow shadow-[0_6px_0_#000]" disabled>เบิร์น + QR</button>
+      <button id="btnDownload" class="btn btn-blue">Download</button>
+      <button id="btnPrint" class="btn btn-dark">Print Mockup</button>
+      <button id="btnGoFame" class="btn btn-dark">Wall of Fame</button>
+    </div>
+    <button id="btnRestart" class="btn btn-dark mt-2 mb-4">เริ่มใหม่ทั้งหมด</button>
+  </div>
+
+  <div id="printArea" class="hidden"></div>
+</section>
+
+<!-- █████ หน้า 4 · WALL OF FAME █████ -->
+<section id="scr-fame" class="screen hidden min-h-screen px-5 py-6 flex flex-col">
+  <div class="flex items-center justify-between">
+    <h2 class="display text-2xl">WALL OF FAME</h2>
+    <button id="btnBackHome2" class="btn btn-dark px-3" aria-label="กลับหน้าแรก">กลับ</button>
+  </div>
+  <div id="fameTabs" class="mt-3 grid grid-cols-4 gap-2"></div>
+  <div id="fameGrid" class="mt-4 grid grid-cols-2 gap-3 flex-1 content-start pb-10"></div>
+  <p class="text-[11px] text-white/50 pb-6" id="fameNote"></p>
+</section>
+
+<!-- modal ดูรูปใหญ่ -->
+<div id="viewer" class="hidden fixed inset-0 z-[90] bg-black/90 grid place-items-center p-6">
+  <button id="viewerClose" class="btn btn-dark absolute top-4 right-4 px-3" aria-label="ปิด">ปิด</button>
+  <img id="viewerImg" alt="รูปขยาย" class="max-w-full max-h-[78vh] rounded-lg shadow-2xl" />
+  <p id="viewerCap" class="absolute bottom-8 text-sm font-semibold"></p>
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   1) BACKEND CONFIG  — แก้ค่าส่วนนี้เมื่อตั้งค่า Firebase/Supabase
+      (ค่าเดียวกันต้องทำซ้ำใน download.html)
+   ════════════════════════════════════════════════════════════ */
+const BACKEND = {
+  mode: 'local',            // 'local' | 'firebase' | 'supabase' | 'worker'
+  firebase: { apiKey: '', projectId: '', storageBucket: '' },
+  supabase: { url: '', key: '' },   // anon public key
+  worker: { base: '' }      // เว้นว่าง = ใช้ origin เดียวกับหน้าเว็บ (โหมด Sites)
+};
+
+/* ตรวจอัตโนมัติ: รันบนโดเมน Sites → โหมด worker สแกนข้ามเครื่องได้ / รัน local → โหมดเดิม */
+const IS_SITES = /freebuff\.page$/i.test(location.hostname);
+const API_BASE = (BACKEND.mode === 'worker' || IS_SITES)
+  ? (BACKEND.worker.base || location.origin)
+  : null;
+const USE_WORKER = !!API_BASE;
+
+/* ════════════════════════════════════════════════════════════
+   2) DATA — ศิลปิน 11 วง (ฮาร์ดโค้ดจากโฟลเดอร์จริงของโปรเจกต์)
+      รูป  = /<genreDir>/<ชื่อวง>/image/<file>
+      เพลง = /<genreDir>/<ชื่อวง>/<file>.mp3
+   ════════════════════════════════════════════════════════════ */
+const GENRE_DIR = { indie:'indy', pop:'pop', rnb:'r&b' };
+
+const BANDS = {
+  indie: [
+    { id:'polycat', name:'POLYCAT',
+      images:['images (6).jpg','polycat6.jpg'],
+      tracks:[
+        { f:'POLYCAT - Chapter 3 พบกันใหม่ So Long [Official MV].mp3', title:'Chapter 3 พบกันใหม่ (So Long)' },
+        { f:'POLYCAT - ดูดี Pretty ...Good [Official MV].mp3',          title:'ดูดี (Pretty Good)' },
+        { f:'เวลาเธอยิ้ม (Extended Version).mp3',                       title:'เวลาเธอยิ้ม (Extended)' } ] },
+    { id:'Safeplanet', name:'SAFEPLANET',
+      images:['safeplanet(1).jpg','a8ff44b0-77cc-11ef-96fb-7904c23d71ed_webp_original.webp'],
+      tracks:[
+        { f:'Safeplanet - ข้างกาย ( With You ).mp3', title:'ข้างกาย (With You)' },
+        { f:'Safeplanet - คำตอบ (Answer).mp3',        title:'คำตอบ (Answer)' },
+        { f:'Safeplanet - ดินแดน (Din Dan) Feat. สฤษฎ T-Bone (Official Audio).mp3', title:'ดินแดน (Din Dan) feat. สฤษฎ T-Bone' } ] },
+    { id:'Yented', name:'YENTED',
+      images:['images (7).jpg','images (8).jpg'],
+      tracks:[
+        { f:'dream. (좋은 분위기) - Yented, MRCH 윤마치, will hyde (official lyric video) (กดติดตามถ้าคุณกำลังดูอยู่!).mp3', title:'dream.' },
+        { f:'YENTED - ตุ๋ยดุ๋ย (LOSER) [Official Music Video].mp3', title:'ตุ๋ยดุ๋ย (LOSER)' },
+        { f:'YENTED - ที่รักใจเย็น (Unsettled) ft. BlackHeart , Williams [OFFICIAL VISUALIZER].mp3', title:'ที่รักใจเย็น (Unsettled) ft. BlackHeart' } ] }
+  ],
+  pop: [
+    { id:'Nont Tanont', name:'NONT TANONT',
+      images:['s_05_clean_nontxpixxie_01.jpg','s__17801367_0(1).jpg'],
+      tracks:[
+        { f:'NONT TANONT - คืนที่หมาเต็มวัด (Temple Dogs) ft. Singto Numchok [Official MV].mp3', title:'คืนที่หมาเต็มวัด (Temple Dogs) ft. Singto' },
+        { f:'NONT TANONT - โต๊ะริม (melt) [Official MV].mp3', title:'โต๊ะริม (melt)' },
+        { f:'รักแรก (First Love) Ost.รักแรกโคตรลืมยาก My Precious - NONT TANONT.mp3', title:'รักแรก (First Love)' } ] },
+    { id:'The Toys', name:'THE TOYS',
+      images:['ab67616d00001e02fcbc6983cef9a7b7f448aca7.jpg','The-TOYS---Pic-Article-05.jpg'],
+      tracks:[
+        { f:'THE TOYS - อาหมวยหาย (阿妹走) [Official MV].mp3', title:'อาหมวยหาย (阿妹走)' },
+        { f:'THETOYS - จดหมาย【OFFICIAL MV 】.mp3',            title:'จดหมาย' } ] },
+    { id:'Three Man Down', name:'THREE MAN DOWN',
+      images:['ab6761610000e5eb4851af37442985c4e2258f79.jpg','86379106_2544819052399280_593.jpg'],
+      tracks:[
+        { f:'Three Man Down - ข้างกัน (City) Feat.ออม TELEx TELEXs「Official Video」.mp3', title:'ข้างกัน (City) feat. ออม TELEx TELEXs' },
+        { f:'ถ้าเธอรักฉันจริง - Three Man Down Official MV.mp3', title:'ถ้าเธอรักฉันจริง' },
+        { f:'ฝนตกไหม - Three Man Down Official MV.mp3',          title:'ฝนตกไหม' } ] }
+  ],
+  rnb: [
+    { id:'Betayourbitch', name:'BETAYOURBITCH',
+      images:['ab6761610000517448a540e3f1552a3b1b147776.jpg','channels4_profile.jpg'],
+      tracks:[
+        { f:'1014.mp3',     title:'1014' },
+        { f:'1014_1_.mp3',  title:'1014 II' } ] },
+    { id:'Blackheart', name:'BLACKHEART',
+      images:['1.jpg','images (9).jpg'],
+      tracks:[
+        { f:'1014_2_.mp3',  title:'1014' },
+        { f:'1014_4_.mp3',  title:'1014 II' } ] },
+    { id:'Illslick', name:'ILLSLICK',
+      images:['1900x1900-000000-80-0-0.jpg','YgjHtTz7TbVAO7T3tvUs.webp'],
+      tracks:[
+        { f:'1014_3_.mp3',  title:'1014' },
+        { f:'1014_5_.mp3',  title:'1014 II' } ] },
+    { id:'Meyou', name:'MEYOU',
+      images:['1-819x1024.jpg','images (10).jpg'],
+      tracks:[
+        { f:'1014_6_.mp3',            title:'1014' },
+        { f:'MEYOU - กลไกสมอง.mp3',   title:'กลไกสมอง' } ] },
+    { id:'Z9', name:'Z9',
+      images:['1900x1900-000000-80-0-0 (1).jpg','images (11).jpg'],
+      tracks:[
+        { f:'1014_7_.mp3', title:'1014' },
+        { f:'Z9 - ไม่รักดีกว่า (Official Music Video) (1).mp3', title:'ไม่รักดีกว่า' } ] }
+  ]
+};
+
+/* path helper — ใช้ encodeURIComponent แยกทีละส่วน (ป้องกัน & ใน r&b) */
+/** คำนำหน้าพาธสื่อ: บน Sites (worker mode) ไฟล์เพลง/รูปวงอยู่บน R2 ผ่าน /media/ */
+const MEDIA_PREFIX = USE_WORKER ? API_BASE + '/media/' : '';
+function pPath(parts){ return MEDIA_PREFIX + parts.map(encodeURIComponent).join('/'); }
+/* ทำสำรวจให้เอาวงไหนรู้ว่าอยู่แนวไหน (b.g) — แก้เรื่อง บริบทวง */
+for (const _g in BANDS){ for (const _b of BANDS[_g]) _b.g = _g; }
+function bandDir(b){ return pPath([GENRE_DIR[b.g], b.id]); }
+function imgURL(b, file){ return bandDir(b) + '/image/' + encodeURIComponent(file); }
+function trackURL(b, tr){ return bandDir(b) + '/' + encodeURIComponent(tr.f); }
+
+/* placeholder SVG เมื่อรูปโหลดไม่ได้ */
+function phURI(text, c1, c2){
+  const svg = "<svg xmlns='http://www.w3.org/2000/svg' width='600' height='800'>"
+    + "<defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + c1 + "'/><stop offset='1' stop-color='" + c2 + "'/></linearGradient></defs>"
+    + "<rect width='600' height='800' fill='url(#g)'/>"
+    + "<circle cx='300' cy='340' r='90' fill='none' stroke='#121116' stroke-width='10'/>"
+    + "<path d='M300 250 v180 M255 295 h90 M255 385 h90' stroke='#121116' stroke-width='10'/>"
+    + "<text x='300' y='560' font-family='sans-serif' font-size='34' font-weight='bold' fill='#121116' text-anchor='middle'>"
+    + (text.replace(/&/g,'&amp;').replace(/</g,'&lt;')) + "</text>"
+    + "<text x='300' y='610' font-family='sans-serif' font-size='20' fill='#121116' text-anchor='middle'>▲ no photo</text></svg>";
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+const PH = { indie:['#dcdcc0','#87970f'], pop:['#ffe14d','#2d7ff9'], rnb:['#8b0f2e','#ff8a7a'], mix:['#3b1e7a','#ffe14d'] };
+
+/* ════════════════════════════════════════════════════════════
+   3) STATE
+   ════════════════════════════════════════════════════════════ */
+const state = {
+  screen:'home',
+  qIndex:0,
+  answers:[null,null,null,null,null,null],   // 0=optionA, 1=optionB
+  band:null,                                  // วงที่ได้จาก MBTI {g,b}
+  style:'pop',                                // 'pop' | 'indie' | 'rnb'
+  shots:[],                                   // canvas ของแต่ละช็อต
+  filter:'original',
+  intensity:0.6,
+  finalBlobURL:null, savedId:null, savedName:''
+};
+
+const MODES = {
+  pop:  { tab:'POP · Y2K',   shots:3, ph:'POP!',     c1:'#ffe14d', c2:'#2d7ff9' },
+  indie:{ tab:'INDIE · TICKET', shots:1, ph:'TICKET', c1:'#e8e8c8', c2:'#87970f' },
+  rnb:  { tab:'R&B · VELVET', shots:2, ph:'VELVET',   c1:'#5c0a1f', c2:'#ff8a7a' }
+};
+const FILTERS = [
+  ['original','ORIGINAL'], ['bw','B&W'], ['fade','FADE'], ['zoomblur','ZOOM BLUR'],
+  ['grain','GRAIN'], ['contrast','CONTRAST'], ['warm','WARM VINTAGE']
+];
+/* ทุกตัวเลือกมีน้ำหนัก [pop, indie, rnb] — ตอบกลางช่วยให้เกิดผลลัพธ์แนวผสมได้ */
+const QUIZ = [
+  { q:'เฟสติวัลคืนนี้มีเวทีกระจายทั้งงาน — เธอจะ…', opts:[
+      { t:'ตะโกนชื่อวงโปรดให้ทั้งงานได้ยิน',     w:[1.2,.3,.3] },
+      { t:'เห็นเวทีเล็กแปลกๆ ตาไปลอยเลย',         w:[.2,1.2,.5] },
+      { t:'เลือกนั่งมุมเบาๆ ใกล้ลำโพง',            w:[.2,.5,1.2] } ]},
+  { q:'ระหว่างเซ็ตลิสต์ เธอทำอะไร?', opts:[
+      { t:'ถ่ายคลิปกับเพื่อนทุกซอกมุม',            w:[1.0,.3,.2] },
+      { t:'ยืนฟังเงียบๆ จดเนื้อที่โดนใจ',          w:[.2,1.0,.6] },
+      { t:'ปล่อยตัวตามเบสกับแสงไฟ',                w:[.3,.2,1.1] } ]},
+  { q:'เลือกลุคกลางงาน', opts:[
+      { t:'สีสด ลายกราฟิก เห็นปุ๊บรู้ปั๊บ',        w:[1.1,.3,.3] },
+      { t:'ผ้าธรรมชาติ โทนสะอาง ดูเหมือนฟิล์ม',    w:[.2,1.1,.4] },
+      { t:'เมมทัมมืดๆ เงาๆ แต่งตามอารมณ์',         w:[.3,.3,1.1] } ]},
+  { q:'เพลงแรกของเพลย์ลิสต์', opts:[
+      { t:'ฮุกติดหู โดนปั๊บเปิดครั้งเดียว',         w:[1.2,.4,.2] },
+      { t:'เพลงช้าๆ ซ่อนความหมายลึก',              w:[.2,1.2,.5] },
+      { t:'เบสหนักๆ + ซินธ์อุ่นๆ',                 w:[.2,.4,1.2] } ]},
+  { q:'ถ้าจะโพสต์รูปจากงานลง IG', opts:[
+      { t:'แคปชั่น 1 บรรทัด ตรงปก',                w:[1.0,.2,.3] },
+      { t:'แคปชั่นยาว เล่าเรื่องข้างในเพลง',        w:[.2,1.0,.6] },
+      { t:'ภาพเบลอๆ + โทนแดงร้อน',                 w:[.3,.3,1.0] } ]},
+  { q:'เพื่อนขอฟังเพลงเท่ดี เธอ…', opts:[
+      { t:'ส่ง playlist 20 เพลง ครบประเด็น',       w:[.8,.4,.2] },
+      { t:'เลือกเพลง indies ตามอารมณ์วันนั้น',      w:[.2,.8,.5] },
+      { t:'เล่าว่าเพลงนี้โยงกับหัวใจเธอ',           w:[.2,.5,1.0] } ]}
+];
+
+/* util */
+const clamp01 = v => Math.max(0, Math.min(1, v));
+const pickOne = a => a[Math.floor(Math.random()*a.length)];
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+/* ════════════════════════════════════════════════════════════
+   4) MUSIC ENGINE — เพลงพื้นหลังของทั้งแอป
+      โหมด mix   : สุ่มเพลงจากทุกวง (Home)
+      โหมด band  : เล่นเพลงของ "วงนั้นวงเดียว" วนชุดเพลงของวง
+   ════════════════════════════════════════════════════════════ */
+const bgm = document.getElementById('bgm');
+const audio = { queue:[], ii:0, mode:'idle', shuffle:false };
+
+// theme body helper
+function setTheme(g){
+  document.body.className = ('theme-' + (g||'mix')) + ' text-neutral-100 min-h-screen antialiased overflow-x-hidden';
+}
+setTheme(null);
+
+function allTracks(){
+  const out = [];
+  for (const g in BANDS) for (const b of BANDS[g])
+    b.tracks.forEach(t => out.push({ g, band:b, title:t.title, url:trackURL(b,t) }));
+  return out;
+}
+
+/* เล่นแทร็กใน audio.queue ตาม index */
+function playTrack(i){
+  if (!audio.queue.length) return;
+  audio.ii = (i + audio.queue.length) % audio.queue.length;
+  const t = audio.queue[audio.ii];
+  bgm.src = t.url;
+  bgm.play().catch(()=>{});           // บางเบราว์เซอร์ขอ gesture ก่อน — ข้าม error เงียบๆ
+  updateNowBar(t.title + ' — ' + t.band.name);
+  updateHomeBg(t.band, t.title);
+}
+
+/* ══ หน้าแรก: พื้นหลัง + แผ่นเสียงอัปเดตตามวงที่เพลงกำลังเล่น (ครอสเฟด) ══ */
+let _bgFront = 'A';
+function updateHomeBg(band, title){
+  if (!band) return;
+  const url = imgURL(band, band.images[0]);
+  // พื้นหลังเบลอ ครอสเฟดสองชั้น A/B
+  const back = document.getElementById('homeBg' + (_bgFront === 'A' ? 'B' : 'A'));
+  const front = document.getElementById('homeBg' + _bgFront);
+  _bgFront = (_bgFront === 'A' ? 'B' : 'A');
+  back.classList.remove('on');
+  front.src = url;
+  front.classList.add('on');
+  // ป้ายกลางแผ่นเสียง = รูปวงนั้น
+  const vi = document.getElementById('vinylImg');
+  const probe = new Image();
+  probe.onload = () => { vi.src = url; vi.classList.remove('opacity-0'); };
+  probe.onerror = () => { vi.classList.add('opacity-0'); };
+  probe.src = url;
+  const tag = document.getElementById('homeBandTag');
+  if (tag) tag.textContent = '♪ ' + band.name + (title ? ' — ' + title : '');
+}
+
+function setQueue(list, mode){ audio.queue = list; audio.mode = mode; }
+
+/* เอาเพลงของวงเดียววน */
+function setBandPlaylist(b){
+  audio.shuffle = false;
+  setQueue(b.tracks.map(t => ({ g:b.g, band:b, title:t.title, url:trackURL(b,t) })), 'band');
+  playTrack(0);
+}
+/* คลังรวมทุกวง สุ่ม */
+function startMix(){
+  const all = allTracks();
+  for (let i = all.length - 1; i > 0; i--){ const j = Math.floor(Math.random()*(i+1)); [all[i],all[j]]=[all[j],all[i]]; }
+  setQueue(all, 'mix'); playTrack(0);
+}
+
+function nextTrack(d){
+  if (!audio.queue.length) return;
+  if (audio.mode === 'mix' || audio.shuffle)
+    playTrack(pickRandomOther());
+  else playTrack(audio.ii + d);
+}
+function pickRandomOther(){
+  if (audio.queue.length < 2) return 0;
+  let n; do { n = Math.floor(Math.random()*audio.queue.length); } while (n === audio.ii);
+  return n;
+}
+function togglePause(){ if (bgm.paused) bgm.play().catch(()=>{}); else bgm.pause(); }
+
+function updateNowBar(txt){ const el = document.getElementById('trackTitle'); if (el) el.textContent = txt; }
+function toggleMuteAudio(){ bgm.muted = !bgm.muted; document.getElementById('btnMute').textContent = bgm.muted ? '🔇' : '🔊'; }
+
+bgm.addEventListener('ended', () => { if (audio.mode === 'band') playTrack(audio.ii + 1); else playTrack(audio.ii + 1); });
+document.getElementById('btnMute').onclick = toggleMuteAudio;
+
+/* เริ่มเพลงภาพรวมหลังจาก "แตะครั้งแรก" ตามที่สเปคกำหนด */
+let musicStarted = false;
+document.addEventListener('pointerdown', function once(){
+  document.removeEventListener('pointerdown', once);
+  if (!musicStarted){
+    musicStarted = true;
+    // ถ้าผู้ใช้เหลือ "โหมดวง" ให้คงไว้ — แต่ถ้ายังไม่มีเพลงเลย สุ่มจากคลังรวม
+    if (audio.mode !== 'band') startMix();
+    document.getElementById('vinyl')
+      .style.setProperty('animation-play-state', 'running');
+  }
+}, { once:false });
+
+/* ornament สแกนสุ่มวง */
+document.getElementById('marqA').textContent =
+  Object.values(BANDS).flat().map(b => b.name).join(' · ') + ' · ';
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   5) NAVIGATION — เปลี่ยนหน้าจอตาม flow (กำหนดสถานะใน state)
+      ห้ามข้ามหน้าโดยไม่ผ่าน flow: ปุ่มถัดไปถูก disabled จนกว่าจะผ่านเงื่อนไข
+   ════════════════════════════════════════════════════════════ */
+const SCREENS = ['home','quiz','meet','booth','fame'];
+function showScreen(name){
+  state.screen = name;
+  SCREENS.forEach(id => document.getElementById('scr-'+id).classList.toggle('hidden', id !== name));
+  window.scrollTo(0,0);
+  if (name !== 'booth') stopCam();
+  if (name === 'fame') renderFame();
+}
+document.getElementById('btnStart').onclick = () => {
+  state.qIndex = 0;
+  state.answers = [null,null,null,null,null,null];   // เริ่มชุดใหม่เสมอ
+  renderQuiz(); showScreen('quiz');
+};
+document.getElementById('btnGoFame0').onclick = () => showScreen('fame');
+document.getElementById('btnGoFame').onclick  = () => showScreen('fame');
+document.getElementById('btnBackHome1').onclick = () => showScreen('home');
+document.getElementById('btnBackHome2').onclick = () => showScreen('home');
+document.getElementById('btnRestart').onclick = () => {
+  resetRun(); stopCam();
+  setTheme(null); resetHomeForRestart();                    // ธีมกลับ mix + เพลงใหม่
+  showScreen('home');
+  if (musicStarted) startMix();                             // ← สุ่มเพลงใหม่ทันที (พื้นหลัง home ก็เปลี่ยนไปตามวง)
+};
+/* กลับสู่หน้าแรกใหม่สดๆ: เคลียร์พื้นหลังวงเก่า + พร้อมรับเพลงใหม่ */
+function resetHomeForRestart(){
+  document.getElementById('homeBgA').classList.remove('on');
+  document.getElementById('homeBgB').classList.remove('on');
+  document.getElementById('vinylImg').classList.add('opacity-0');
+  updateNowBar('— กดเพื่อเปิดเพลง —');
+  document.getElementById('homeBandTag').textContent = 'ตอนนี้ฟังมุมมองอะไรก็ได้';
+}
+
+function resetRun(){
+  state.qIndex = 0; state.answers = [null,null,null,null,null,null];
+  state.shots = []; state.finalBlobURL = null; state.savedId = null; state.savedName='';
+  document.getElementById('playerName').value = '';
+  document.getElementById('qrCard').classList.add('hidden');
+  document.getElementById('qrCard').classList.remove('flex');
+}
+
+/* ════════════════════════════════════════════════════════════
+   6) หน้า 1 · MBTI QUIZ (6 ข้อ)
+   ════════════════════════════════════════════════════════════ */
+function renderQuiz(){
+  // จุดความคืบหน้า 6 คะแนน
+  const dots = document.getElementById('dots');
+  dots.innerHTML = state.answers.map((a,i) => {
+    const on = a !== null;
+    return '<span class="w-2.5 h-2.5 rounded-full border border-white/60 ' + (on ? 'bg-[#ffe14d]' : 'bg-transparent') + '" data-i="'+i+'"></span>';
+  }).join('');
+
+  const i = Math.min(state.qIndex, QUIZ.length-1);
+  const q = QUIZ[i];
+  document.getElementById('qStep').textContent = 'คำถาม ' + (i+1) + '/6';
+  document.getElementById('qText').textContent = q.q;
+  const A = document.getElementById('optA'), B = document.getElementById('optB');
+  const C = document.getElementById('optC');
+  [A,B,C].forEach((el,k) => {          // k=0 → optA, 1 → optB, 2 → optC
+    if (q.opts[k]) el.textContent = q.opts[k].t;
+    el.style.borderColor = state.answers[i] === k ? '#ffe14d' : '#fff';
+    el.style.background  = state.answers[i] === k ? '#2b2b33' : '';
+  });
+  const btn = document.getElementById('btnQuizNext');
+  const done = state.answers.every(v => v !== null);
+  if (state.answers[i] !== null){
+    btn.disabled = false;
+    btn.textContent = (i < QUIZ.length-1) ? 'ถัดไป →' : 'ดูผลลัพธ์';
+  } else {
+    btn.disabled = true;                       // ห้ามข้าม: ต้องตอบข้อปัจจุบันก่อน
+  }
+}
+function setQuizAnswer(k){
+  state.answers[state.qIndex] = k;             // กลับมาแก้ไขคำตอบข้อเดิมได้
+  renderQuiz();
+}
+document.getElementById('optA').onclick = () => setQuizAnswer(0);
+document.getElementById('optB').onclick = () => setQuizAnswer(1);
+document.getElementById('optC').onclick = () => setQuizAnswer(2);
+
+document.getElementById('btnQuizNext').onclick = () => {
+  if (state.answers[state.qIndex] === null) return;    // กันข้ามข้ออีกชั้น
+  if (state.qIndex < QUIZ.length-1){ state.qIndex++; renderQuiz(); }
+  else if (state.answers.every(v => v !== null)) weighIntoMeet();  // ตอบครบ 6/6 เท่านั้น
+};
+
+/* ════════════════════════════════════════════════════════════
+   7) แปลงคำตอบ MBTI → แนว → สุ่ม 1 วงจากแนวนั้น
+   ════════════════════════════════════════════════════════════
+   pickBandByMBTI(answers) — answers = [0|1]×6 (0 = ตัวเลือก a, 1 = ตัวเลือก b)
+   คู่ข้อ: 1-2 = E/I, 3-4 = S/N, 5-6 = T/F
+   คะแนนต่อแนว: pop | indie | rnb
+*/
+/* น้ำหนักทุกตัวเลือก 3 แนว — ตอบตัวไหนสะสมคะแนนตาม w=[pop, indie, rnb] ของตัวนั้น */
+function pickBandByMBTI(){
+  const score = { pop:0, indie:0, rnb:0 };
+  state.answers.forEach((k, i) => {
+    if (k === null) return;
+    const w = QUIZ[i].opts[k].w;
+    score.pop += w[0]; score.indie += w[1]; score.rnb += w[2];
+  });
+  // สุ่มนิดๆ กันซ้ำเมื่อคะแนนใกล้เคียงกัน
+  for (const k in score) score[k] += Math.random()*.4;
+  const g = Object.entries(score).sort((a,b) => b[1]-a[1])[0][0];   // แนวชนะ
+  const band = pickOne(BANDS[g]);                                   // สุ่ม 1 วงจากแนวนั้น
+  return { g, band };
+}
+
+function weighIntoMeet(){
+  state.band = pickBandByMBTI();
+  state.style = state.band.g;
+  setTheme(state.band.g);
+  renderMeet();
+  showScreen('meet');
+}
+
+function renderMeet(){
+  const { g, band } = state.band;
+  document.getElementById('bandChip').textContent = band.name;
+  document.getElementById('boothHead').textContent = 'MEET ' + band.name;
+  document.getElementById('bandTitle').textContent = band.name;
+  const slot = document.getElementById('userSlot');
+  slot.style.background = 'linear-gradient(135deg,' + MODES[g].c1 + '33,' + MODES[g].c2 + '44)';
+
+  // รูปวง ซ้าย/ขวา พร้อม fallback อะไรละ
+  const L = document.getElementById('bandImgL'), R = document.getElementById('bandImgR');
+  L.replaceChildren(makeImg(imgURL(band, band.images[0])));
+  R.replaceChildren(makeImg(imgURL(band, band.images[1] || band.images[0])));
+
+  document.getElementById('bandTrackName').textContent = '— กำลังโหลดเพลงของวง —';
+  setBandPlaylist(band);      // สลับเป็นเพลงของ "วงเดียว" แล้วเล่นวน
+}
+
+/** <img> พร้อม onerror สลับไป placeholder ของแนวนั้น */
+function makeImg(src){
+  const img = document.createElement('img');
+  img.src = src; img.alt = 'รูปศิลปิน';
+  img.className = 'w-full h-full object-cover';
+  img.onerror = () => { img.onerror = null; img.src = phURI('FRAME OF SOUND', PH.pop[0], PH.pop[1]); };
+  return img;
+}
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   8) หน้า 3 · BOOTH — แท็บกรอบ + กล้อง (getUserMedia) + นับถอยหลัง
+   ════════════════════════════════════════════════════════════ */
+const vid = document.getElementById('vid');
+let streamRef = null, facing = 'user';
+
+function openCam(){
+  stopCam();                                 // ปิดของเก่าก่อนเสมอ
+  document.getElementById('camFallback').classList.add('hidden');
+  vid.style.setProperty('--mirror', facing === 'user' ? -1 : 1);
+  navigator.mediaDevices.getUserMedia({
+    video: { facingMode: facing, width:{ideal:1080}, height:{ideal:1350} }, audio:false
+  }).then(s => {
+    streamRef = s; vid.srcObject = s;
+  }).catch(() => {
+    document.getElementById('camFallback').classList.remove('hidden');
+  });
+}
+function stopCam(){
+  if (streamRef){ streamRef.getTracks().forEach(t => t.stop()); streamRef = null; vid.srcObject = null; }
+}
+document.getElementById('btnFlip').onclick = () => {
+  facing = facing === 'user' ? 'environment' : 'user';
+  openCam();
+};
+
+function renderStyleTabs(){
+  document.getElementById('styleTabs').innerHTML = Object.entries(MODES).map(([k,m]) =>
+    '<button data-s="' + k + '" class="btn text-[11px] ' +
+    (k === state.style ? 'btn-yellow' : 'btn-dark') + '">' + m.tab +
+    ' <span class="opacity-60">('+m.shots+' ช็อต)</span></button>').join('');
+  document.querySelectorAll('#styleTabs button').forEach(btn =>
+    btn.onclick = () => { state.style = btn.dataset.s; state.shots = []; renderBooth(); renderThumbs(); });
+}
+function shotText(){ const n = MODES[state.style].shots; const have = state.shots.length; return 'นับถอยหลัง 3·2·1 แล้วแฟลช · ' + have + '/' + n + ' ช็อต'; }
+
+function renderBooth(){
+  renderStyleTabs();
+  document.getElementById('shotCounter').textContent = shotText();
+  document.getElementById('btnToFilter').disabled = state.shots.length < MODES[state.style].shots;
+  document.getElementById('bandChip').textContent = state.band ? state.band.band.name : '—';
+}
+document.getElementById('btnToBooth').onclick = () => {
+  openCam(); renderBooth(); renderThumbs();
+  document.getElementById('stepCapture').classList.remove('hidden');
+  document.getElementById('stepFilter').classList.add('hidden');
+  document.getElementById('stepResult').classList.add('hidden');
+  showScreen('booth');
+};
+
+/* นับถอยหลัง 3-2-1 แล้วแฟลช */
+document.getElementById('btnShoot').onclick = () => {
+  if (streamRef === null){ toast('ไม่มีกล้อง — ลอง FLIP หรือ UPLOAD'); return; }
+  if (state.shots.length >= MODES[state.style].shots){ toast('ครบจำนวนช็อตแล้ว'); return; }
+  let n = 3;
+  const ov = document.createElement('div'); ov.className = 'countdown'; document.body.appendChild(ov);
+  const tick = () => {
+    if (n > 0){ ov.textContent = n; n--; setTimeout(tick, 700); }
+    else { ov.remove(); document.getElementById('flash').classList.remove('go');
+           void document.getElementById('flash').offsetWidth;
+           document.getElementById('flash').classList.add('go'); takeShot(); }
+  }; tick();
+};
+
+/* ยิงช็อตจาก video มาลง canvas (ครอปกลางให้เป็นสี่เหลี่ยมภาพฟิล์ม) */
+function takeShot(){
+  const c = document.createElement('canvas');
+  c.width = 720; c.height = 960;                       // god-portrait 3:4
+  const ctx = c.getContext('2d');
+  const v = vid, vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw){ toast('กล้องยังไม่พร้อม'); return; }
+  const s = Math.max(c.width/vw, c.height/vh);         // cover-crop ตรงกลาง
+  if (facing === 'user'){                              // มิเรอร์ให้เหมือนที่เห็น
+    ctx.translate(c.width, 0); ctx.scale(-1, 1);
+  }
+  ctx.drawImage(v, (c.width - vw*s)/2, (c.height - vh*s)/2, vw*s, vh*s);
+  state.shots.push(c);
+  renderThumbs(); renderBooth();
+  if (state.shots.length >= MODES[state.style].shots) toast('ครบแล้ว! กด "ถัดไป: ตกแต่ง"');
+}
+
+/* อัปโหลดรูปแทนกล้อง */
+document.getElementById('fileInput').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const c = document.createElement('canvas'); c.width = 720; c.height = 960;
+    const ctx = c.getContext('2d');
+    const s = Math.max(720/img.width, 960/img.height);
+    ctx.drawImage(img, (720 - img.width*s)/2, (960 - img.height*s)/2, img.width*s, img.height*s);
+    state.shots.push(c); renderThumbs(); renderBooth(); e.target.value = '';
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+function renderThumbs(){
+  const row = document.getElementById('thumbRow');
+  row.innerHTML = '';
+  state.shots.forEach((c, i) => {
+    const t = document.createElement('canvas'); t.width = 90; t.height = 120;
+    t.getContext('2d').drawImage(c, 0, 0, 90, 120);
+    t.className = 'h-[70px] rounded-lg border-2 border-white/60 shadow cursor-pointer shrink-0';
+    t.onclick = () => { state.shots.splice(i, 1); renderThumbs(); renderBooth(); openCam(); toast('ลบช็อตนี้แล้ว — ถ่ายใหม่ได้เลย'); };
+    row.appendChild(t);
+  });
+}
+
+/* toast อย่างง่าย */
+function toast(msg){
+  const t = document.createElement('div');
+  t.className = 'fixed left-1/2 -translate-x-1/2 bottom-24 z-[95] bg-black text-white text-sm font-bold px-5 py-3 rounded-full border border-white/30';
+  t.textContent = msg; document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2400);
+}
+
+/* ════════════════════════════════════════════════════════════
+   9) ฟิลเตอร์ Canvas 2D + กรอบ (3b)
+   ════════════════════════════════════════════════════════════ */
+
+/** applyFilter(ctx, src, type, intensity)
+ *  วาด src ลงบน ctx โดยใส่ฟิลเตอร์ตามชนิดและความเข้ม 0..1
+ *  - B&W / FADE / CONTRAST ใช้ ctx.filter
+ *  - ZOOM BLUR ซ้อนภาพหลายเลเยอร์ scale เพิ่มทีละน้อยรอบจุดกลาง
+ *  - GRAIN ใช้นอยส์ tile แปะทับด้วย blend overlay
+ *  - WARM VINTAGE ใช้ sepia + ชั้นสีส้ม multiply/overlay */
+function applyFilter(ctx, src, type, intensity){
+  const i = clamp01(intensity), w = src.width, h = src.height;
+  ctx.save();
+
+  if (type === 'bw')       ctx.filter = 'grayscale(' + i + ')';
+  else if (type === 'fade') ctx.filter = 'saturate(' + (1-0.45*i) + ') contrast(' + (1-0.25*i) + ') brightness(' + (1+0.12*i) + ')';
+  else if (type === 'contrast') ctx.filter = 'contrast(' + (1+0.9*i) + ') saturate(' + (1+0.35*i) + ')';
+  else if (type === 'warm') ctx.filter = 'sepia(' + (0.4*i) + ') saturate(' + (1+0.25*i) + ') brightness(' + (1+0.04*i) + ')';
+
+  drawCover(ctx, src, 0, 0, w, h);   // วาดฐานเสมอ (ครอปแบบ cover ขอบเนียน)
+  ctx.restore();
+
+  if (type === 'fade'){  // ชั้นขาวบางๆ ให้หม่นละมุน
+    ctx.save(); ctx.globalAlpha = 0.08*i; ctx.fillStyle = '#fff'; ctx.fillRect(0,0,w,h); ctx.restore();
+  }
+  if (type === 'warm'){  // ย้อมโทนส้มอุ่น
+    ctx.save(); ctx.globalCompositeOperation = 'multiply'; ctx.globalAlpha = 0.22*i;
+    ctx.fillStyle = '#ff9a3c'; ctx.fillRect(0,0,w,h); ctx.restore();
+  }
+  if (type === 'zoomblur'){   // ซ้อนภาพหลายเลเยอร์ — ขยายขึ้นทีละนิดจากจุดกลาง
+    const snap = document.createElement('canvas'); snap.width = w; snap.height = h;
+    drawCover(snap.getContext('2d'), src, 0, 0, w, h);
+    ctx.save(); ctx.translate(w/2, h/2);
+    for (let k = 1; k <= 10; k++){
+      const s = 1 + 0.02*k*i;
+      ctx.globalAlpha = 0.115 * (1 - (k/10)*i);
+      ctx.drawImage(snap, -w/2*s, -h/2*s, w*s, h*s);
+    }
+    ctx.restore();
+  }
+  if (type === 'grain'){     // นอยส์เม็ดฟิล์ม ผสมแบบ overlay
+    ctx.save(); ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = 0.09 + 0.22*i;
+    ctx.fillStyle = ctx.createPattern(noiseTile(), 'repeat');
+    ctx.fillRect(0, 0, w, h); ctx.restore();
+  }
+}
+
+/** noise tile (สร้างครั้งเดียว ใช้ซ้ำ) */
+let _noise = null;
+function noiseTile(){
+  if (_noise) return _noise;
+  const n = document.createElement('canvas'); n.width = 128; n.height = 128;
+  const d = n.getContext('2d').createImageData(128, 128);
+  for (let p = 0; p < d.data.length; p += 4){
+    const g = 110 + Math.random()*120 | 0;
+    d.data[p] = d.data[p+1] = d.data[p+2] = g; d.data[p+3] = 255;
+  }
+  n.getContext('2d').putImageData(d, 0, 0);
+  _noise = n; return n;
+}
+
+/** ครอปภาพแบบ cover ลงตำแหน่ง (x,y,w,h) */
+function drawCover(ctx, src, x, y, w, h){
+  const s = Math.max(w/src.width, h/src.height);
+  ctx.drawImage(src, x + (w - src.width*s)/2, y + (h - src.height*s)/2, src.width*s, src.height*s);
+}
+
+/** โหลดรูปแบบ promise — โหลดไม่ได้เมื่อไหร่ สลับไป placeholder ของแนวนั้น */
+function loadImg(src, ph){ return new Promise(res => {
+  const i = new Image();
+  i.onload = () => res(i);
+  i.onerror = () => { const j = new Image(); j.onload = () => res(j); j.src = ph; };
+  i.src = src;
+}); }
+
+/** โพลารอยด์รูปศิลปิน — วาดรูปจริงของ “วงที่ได้” แบบสติกเกอร์เอียงๆ
+ *  ใช้ในกรอบตอน composeFrame (auto ตาม state.band) */
+async function drawArtistPolaroid(ctx, band, idx, ox, oy, w, h, rot){
+  if (!band) return;
+  const src = imgURL(band, band.images[idx % band.images.length]);
+  const img = await loadImg(src, phURI(band.name, PH[band.g][0], PH[band.g][1]));
+  ctx.save();
+  ctx.translate(ox + w/2, oy + h/2); ctx.rotate(rot);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(-w/2 - 9, -h/2 - 9, w + 18, h + 18);   // ขอบโพลารอยด์ขาว
+  drawCover(ctx, img, -w/2, -h/2, w, h);
+  ctx.restore();
+}
+
+/** composeFrame() — รวมช็อตทั้งหมด + ฟิลเตอร์ + กรอบ ตามสไตล์ที่เลือก
+ *  คืน canvas ขนาด 900×(ตามสไตล์) พร้อมตกแต่ง canvas 2D ทั้งหมด */
+async function composeFrame(){
+  const cfg = MODES[state.style];
+  const W = 900;
+  const band = state.band ? state.band.band : null;   // วงที่สุ่มได้ — ใช้อ้างรูปศิลปิน
+
+  /* pop: แถบ 3 ช็อตมุมมน ขอบเหลือง-คราม ดาวป๊ะปี้ (Y2K) */
+  if (state.style === 'pop'){
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = 1460;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#ffe14d'; x.fillRect(0,0,W,cv.height);
+    // แถบน้ำเงินทแยงโบรและดาว
+    x.save(); x.fillStyle = '#2d7ff9';
+    for (let i = -3; i < 10; i++){
+      x.save(); x.translate(W*i*0.12, i*74); x.rotate(0.3); x.fillRect(0,0,120,10); x.restore();
+    }
+    for (const [sx,sy,sr] of [[70,60,9],[820,100,7],[120,1390,6],[760,1345,9],[40,720,5],[855,760,6]]){
+      star(x, sx, sy, sr); x.stroke(); }
+    x.restore();
+    // ช็อต 3 ภาพเรียงแนวตั้ง (ย่อเล็กน้อยให้มีที่สำหรับรูปศิลปินซ้าย-ขวา)
+    const rots = [0.015, -0.012, 0.018];
+    for (let s = 0; s < 3; s++){
+      await sShot(x, state.shots[s], 150 + s*18, 90 + s*428, 580, 415, rots[s], '#ffffff');
+    }
+    // ★ รูปศิลปินซ้าย/ขวา — auto ตามวงที่สุ่มได้ (รูปจริงจากโฟลเดอร์ + fallback)
+    await drawArtistPolaroid(x, band, 0, 10, 390, 175, 250, -0.10);
+    await drawArtistPolaroid(x, band, 1, 712, 500, 170, 240, 0.09);
+    label(x, 'FRAME OF SOUND', 118, 66, '24px', '#2d7ff9');
+    if (band) label(x, '★ ' + band.name + ' ★', 330, 96, '28px', '#121116');
+    label(x, 'POP! POP!', 96, 1408, '54px');
+    label(x, '♥ LOVE ♥', 620, 1424, '30px', '#e0208a');
+    dateTag(x, 560, 70, '#2d7ff9');
+    return cv;
+  }
+
+  /* indie: โทเขียวมะกอก-ครีม ตั๋วรีฟันขอบ + บาร์โค้ด + วันที่ */
+  if (state.style === 'indie'){
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = 1300;
+    const x = cv.getContext('2d');
+    x.fillStyle = '#e9e9c9'; x.fillRect(0,0,W,cv.height);
+    x.fillStyle = '#87970f'; x.fillRect(0, 0, W, 70);
+    label(x, 'ONE SHOT TICKET', 34, 52, '34px', '#121116');
+    label(x, 'MEET BAND · ' + (state.band ? state.band.band.name : ''), 30, 130, '26px', '#12111666');
+    // รูป 1 ภาพกลาง (โครงเต็มมุมมันกลาง)
+    await sShot(x, state.shots[0], 60, 180, 780, 760, 0, '#121116');
+    // สติกเกอร์รูปศิลปินมุมขวาล่าง (auto ตามวง)
+    await drawArtistPolaroid(x, band, 0, 700, 850, 160, 220, -0.05);
+    // ตุ่มเจาะ (perforation) เดายี่สองขอบตั๋ว
+    for (let yy = 0; yy < cv.height; yy += 34){
+      x.fillStyle = '#12111630';
+      x.beginPath(); x.arc(30, yy+14, 11, 0, 7); x.fill();
+      x.beginPath(); x.arc(W-30, yy+14, 11, 0, 7); x.fill();
+    }
+    // บาร์โค้ด & วันที่
+    const d = new Date(); for (let bc = 60; bc < 840; bc += (6 + (bc%13===0 ? 0 : 8)) )
+      { x.fillStyle = '#121116'; x.fillRect(bc, 1130, 2, 74); }
+    label(x, 'FOS · ' + d.toLocaleDateString('th') + ' · №' + (1000 + Math.floor(Math.random()*9000)), 60, 1252, '22px', '#121116aa');
+    label(x, 'INDIE FILM', 610, 1165, '44px');
+    return cv;
+  }
+
+  /* rnb: แพรกล้วงแดงเลือน + ลูกไม้ตันขอบ + ตัวโมงเรืองแสง */
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = 1400;
+  const x = cv.getContext('2d');
+  x.fillStyle = '#3a0716'; x.fillRect(0,0,W,cv.height);
+  lacePattern(x, '#ff8a7a', 0.16, W);
+  x.save(); x.shadowColor = '#ff4d63'; x.shadowBlur = 28;
+  label(x, 'VELVET LACE', 30, 74, '66px', '#ffe4d7cd'); x.restore();
+  label(x, 'FRAME OF SOUND · ' + (state.band ? state.band.band.name : ''), 30, 120, '24px', '#ff8a7ab0');
+  await sShot(x, state.shots[0], 90, 170, 720, 520, 0.02, '#ffe4d7');
+  await sShot(x, state.shots[1], 90, 720, 720, 520, -0.02, '#ffe4d7');
+  // สติกเกอร์รูปศิลปินบนขวา + ล่างซ้าย (auto ตามวง)
+  await drawArtistPolaroid(x, band, 0, 690, 160, 168, 230, 0.08);
+  await drawArtistPolaroid(x, band, 1, 24, 1120, 160, 220, -0.07);
+  dateTag(x, 560, 1340, '#ff8a7a');
+  return cv;
+}
+
+/** ใส่กรอบทีละช็อต: ครอป cover + ใช้ฟิลเตอร์ + หมุนเอียงตาม rot (เรเดียน) */
+async function sShot(CTX, shot, ox, oy, w, h, rot, borderColor){
+  const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+  const tc = tmp.getContext('2d');
+  if (state.filter !== 'original') applyFilter(tc, shot, state.filter, state.intensity);
+  else drawCover(tc, shot, 0, 0, w, h);
+
+  CTX.save();
+  if (rot){ CTX.translate(ox + w/2, oy + h/2); CTX.rotate(rot); CTX.translate(-w/2, -h/2); }
+  else CTX.translate(ox, oy);
+  CTX.fillStyle = borderColor || '#121116';
+  CTX.fillRect(-10, -10, w+20, h+20);
+  CTX.drawImage(tmp, 0, 0, w, h);
+  CTX.restore();
+}
+
+/** ตัวช่วยเล็กๆ */
+function star(x, cx, cy, r){
+  x.beginPath();
+  for (let i = 0; i < 5; i++){
+    const a = -Math.PI/2 + i*2*Math.PI/5;
+    const b = a + Math.PI/5;
+    x.arc(cx, cy, r, a, a+0.2); x.lineTo(cx + r*2*Math.cos(b), cy + r*2*Math.sin(b));
+  }
+  x.closePath();
+}
+function label(x, text, tx, ty, size, color){
+  x.save(); x.globalCompositeOperation = 'source-over';
+  x.fillStyle = color || '#12111699';
+  x.font = '900 ' + size + " 'Kanit', sans-serif";
+  x.fillText(text, tx, ty); x.restore();
+}
+function dateTag(x, ox, oy, color){ label(x, new Date().toLocaleDateString('th'), ox, oy, '22px', color); }
+function lacePattern(x, color, alpha, W){
+  x.save(); x.globalAlpha = alpha; x.strokeStyle = color; x.lineWidth = 5;
+  for (let y = 0; y < 1440; y += 48)
+    for (let c = 0; c < W; c += 56){
+      x.beginPath(); x.arc(c+28, y, 26, 0, Math.PI); x.stroke();
+      x.beginPath(); x.moveTo(c, y); x.lineTo(c, y+48); x.stroke();
+    }
+  x.restore();
+}
+
+/* ════════════════════════════════════════════════════════════
+   10) 3b — พรีวิวสด + .slider ความเข้ม
+   ════════════════════════════════════════════════════════════ */
+function renderFilterRow(){
+  document.getElementById('filterRow').innerHTML = FILTERS.map(([k,n]) =>
+    '<button data-k="' + k + '" class="btn text-xs shrink-0 px-4 ' +
+    (k === state.filter ? 'btn-yellow' : 'btn-dark') + '">' + n + '</button>').join('');
+  document.querySelectorAll('#filterRow button').forEach(b => b.onclick = () => { state.filter = b.dataset.k; composeStep(); });
+  document.getElementById('intensity').value = Math.round(state.intensity*100);
+  document.getElementById('intensityVal').textContent = Math.round(state.intensity*100);
+}
+document.getElementById('intensity').oninput = e => {
+  state.intensity = clamp01(e.target.value/100);
+  document.getElementById('intensityVal').textContent = e.target.value;
+  drawPreview();
+};
+
+function gotoFilterStep(){
+  document.getElementById('stepCapture').classList.add('hidden');
+  document.getElementById('stepResult').classList.add('hidden');
+  const s = document.getElementById('stepFilter'); s.classList.remove('hidden'); s.classList.add('flex');
+  renderFilterRow(); drawPreview(); stopCam();
+}
+document.getElementById('btnToFilter').onclick = gotoFilterStep;
+document.getElementById('btnBackCapture').onclick = () => {
+  const c = document.getElementById('stepCapture'); c.classList.remove('hidden');
+  document.getElementById('stepFilter').classList.add('hidden');
+  openCam(); renderBooth();
+};
+
+let _liveshot = null;          // จำตัวอย่างทางรายล่าสุด
+async function drawPreview(){
+  const cv = await composeFrame();
+  const pv = document.getElementById('livePreview');
+  pv.width = cv.width; pv.height = cv.height;
+  pv.getContext('2d').drawImage(cv, 0, 0);
+  pv.style.width  = 'min(100%, 340px)';
+  pv.style.height = 'auto';
+  _liveshot = cv;
+}
+function composeStep(){ drawPreview(); }
+
+/* ════════════════════════════════════════════════════════════
+   11) 3c — ผลลัพธ์ + uploadAndMakeQR() + ดาวน์โหลด/ปริ้น
+   ════════════════════════════════════════════════════════════ */
+async function gotoResultStep(){
+  const cfg = MODES[state.style];
+  document.getElementById('stepCapture').classList.add('hidden');
+  document.getElementById('stepFilter').classList.add('hidden');
+  const r = document.getElementById('stepResult'); r.classList.remove('hidden'); r.classList.add('flex');
+  const cv = await composeFrame();                       // เบิร์นฟิลเตอร์ลงรูปสุดท้ายตอนนี้
+  document.getElementById('finalImg').src = cv.toDataURL('image/jpeg', 0.92);
+  state._final = cv;
+  document.getElementById('btnSaveQR').disabled = true;   // กรอกชื่อก่อน!
+}
+
+/** uploadAndMakeQR() — upload รูป final → ไabolic ลิงก์ → จับ QR
+ *  local: ลง IndexedDB + URL หน้า download.html?id=  (เปิดได้เฉพาะเครื่องนี้)
+ *  firebase: upload จาก Firebase Storage → ลง Firestore คืน URL สาธารณะ
+ *  supabase: upload ขึ้น bucket shots → ลงตาราง photos คืน URL สาธารณะ */
+async function uploadAndMakeQR(){
+  const name = document.getElementById('playerName').value.trim();
+  if (!name){ toast('กรอกชื่อก่อนนะ 🎜'); document.getElementById('playerName').focus(); return; }
+  const cv = state._final, { g, band } = state.band;
+
+  const btn = document.getElementById('btnSaveQR'); btn.disabled = true; btn.textContent = 'กำลังอัปโหลด…';
+  try {
+    const blob = await new Promise(res => cv.toBlob(res, 'image/jpeg', 0.92));   // canvas.toBlob
+    let id = 'shot-' + Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+    let publicURL = null;
+
+    if (BACKEND.mode === 'firebase'){
+      await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js');
+      const app = firebase.apps.length ? firebase.app() : firebase.initializeApp(BACKEND.firebase);
+      const ref = firebase.storage().ref('shots/' + id + '.jpg');
+      await ref.put(blob, { contentType:'image/jpeg' });
+      publicURL = await ref.getDownloadURL();
+      await firebase.firestore().collection('photos').doc(id)
+             .set({ id, name, band: band.name, genre: g, created_at: Date.now(), image_url: publicURL });
+    }
+    else if (BACKEND.mode === 'supabase'){
+      await loadScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js');
+      const sb = window.supabase.createClient(BACKEND.supabase.url, BACKEND.supabase.key);
+      const up = await sb.storage.from('shots').upload(id + '.jpg', blob, { contentType:'image/jpeg' });
+      if (up.error) throw up.error;
+      const pu = sb.storage.from('shots').getPublicUrl(id + '.jpg');
+      publicURL = pu.data.publicUrl;
+      await sb.from('photos').insert({ id, name, band: band.name, genre: g, image_url: publicURL });
+    }
+    else if (USE_WORKER){
+      /* โหมด Sites: อัปโหลดผ่าน Worker API ลง R2+D1 → สแกน QR ข้ามเครื่องได้ */
+      const fd = new FormData();
+      fd.append('file', blob, id + '.jpg');
+      fd.append('name', name);
+      fd.append('band', band.name);
+      fd.append('genre', g);
+      const r = await fetch(API_BASE + '/api/upload', { method: 'POST', body: fd });
+      const res = await r.json();
+      if (!r.ok) throw new Error(res.error || ('upload ' + r.status));
+      publicURL = API_BASE + res.url;          // ลิงก์สาธารณะข้ามเครื่อง
+    }
+    else {
+      await idbSet('fos_shot_' + id, document.getElementById('finalImg').src);  // รูปเต็ม dataURL
+    }
+
+    const entry = { id, name, band: band.name, genre: g, created_at: Date.now(),
+                    image_url: publicURL, thumb: makeThumb(cv) };
+    saveWallEntry(entry);
+    // QR ทุกโหมดชี้มาที่หน้าดาวน์โหลด + auto=1 → สแกนแล้วเริ่มบันทึกรูปให้เองทันที
+    const baseOrigin = USE_WORKER ? API_BASE : location.origin;
+    const basePath  = USE_WORKER ? '/' : location.pathname.replace(/[^/]*$/, '');
+    const link = USE_WORKER
+      ? baseOrigin + '/download.html?id=' + encodeURIComponent(id) + '&auto=1'
+      : baseOrigin + basePath + 'download.html?id=' + encodeURIComponent(id) + '&auto=1';
+    drawQR(link, publicURL);
+    state.savedId = id; state.savedName = name;
+    toast('เซฟแล้ว! Wall updated 🤩');
+  } catch (err){
+    console.error(err); toast('อัปโหลดผิดพลาด: ' + err.message);
+  } finally {
+    btn.disabled = false; btn.textContent = 'เบิร์น + QR';
+  }
+}
+
+function drawQR(text, isPublic){
+  const card = document.getElementById('qrCard');
+  const box  = document.getElementById('qrBox');
+  card.classList.remove('hidden'); card.classList.add('flex');
+  box.innerHTML = '';
+  if (!window.QRCode){ box.textContent = 'โหลด QR lib ไม่สำเร็จ (ออฟไลน์)'; return; }
+  new QRCode(box, { text, width:104, height:104, correctLevel: QRCode.CorrectLevel.M });
+  document.getElementById('qrNote').textContent = 'สแกนแล้วโหลดรูปได้เลย' + (isPublic ? '' : ' · (เปิดได้เฉพาะเบราว์เซอร์นี้ — local mode)');
+}
+
+function loadScript(src){
+  return new Promise((res, rej) => {
+    if ([...document.scripts].some(s => s.src === src)) return res();
+    const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('สคริปต์โหลดไม่ได้: ' + src));
+    document.head.appendChild(s);
+  });
+}
+
+/* รูปส่อง (thumb) สำหรับ wall — ลดขนาดให้ localStorage ไม่เต็ม */
+function makeThumb(cv){
+  const t = document.createElement('canvas');
+  const s = Math.min(360/cv.width, 360/cv.height);
+  t.width = cv.width*s|0; t.height = cv.height*s|0;
+  t.getContext('2d').drawImage(cv, 0, 0, t.width, t.height);
+  return t.toDataURL('image/jpeg', 0.72);
+}
+
+/* ปุ่มเปิดผลลัพธ์ */
+document.getElementById('btnToResult').onclick = gotoResultStep;
+async function openResultNow(){ await gotoResultStep(); }
+
+/* ชื่อ → ปุ่ม QR ใช้ได้ */
+document.getElementById('playerName').oninput = e => {
+  document.getElementById('btnSaveQR').disabled = e.target.value.trim().length === 0;
+};
+document.getElementById('btnSaveQR').onclick = uploadAndMakeQR;
+
+/* Download ในเครื่อง */
+document.getElementById('btnDownload').onclick = () => {
+  if (!state._final) return;
+  const a = document.createElement('a');
+  a.href = state._final.toDataURL('image/png');
+  a.download = 'frame-of-sound-' + (state.savedName || 'me') + '.png';
+  a.click();
+};
+
+/* Print Mockup: ภาพกรอบบนกระดาษ 4×6" */
+document.getElementById('btnPrint').onclick = () => {
+  if (!state._final) return;
+  const a = document.createElement('div');
+  a.innerHTML = '<img src="' + state._final.toDataURL('image/png') + '" style="width:100%;height:100%;object-fit:contain;background:#fff"/>';
+  const pa = document.getElementById('printArea');
+  pa.className = 'fixed inset-0 z-[120] bg-white'; pa.innerHTML = '';
+  pa.appendChild(a);
+  window.requestAnimationFrame(() => { window.print();
+    setTimeout(() => { pa.className = 'hidden'; pa.innerHTML = ''; }, 300); });
+};
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   12) IndexedDB ช่วยเหลือ (โหมด local)
+   ════════════════════════════════════════════════════════════ */
+function idbOpen(){ return new Promise((res, rej) => {
+  const r = indexedDB.open('fos', 1);
+  r.onupgradeneeded = e => { e.target.result.createObjectStore('photos'); };
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
+async function idbSet(k, v){ const db = await idbOpen(); return new Promise((res, rej) => {
+  const tx = db.transaction('photos', 'readwrite'); tx.objectStore('photos').put(v, k);
+  tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); }
+async function idbGet(k){ const db = await idbOpen(); return new Promise((res, rej) => {
+  const rq = db.transaction('photos').objectStore('photos').get(k);
+  rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); }
+
+/* ════════════════════════════════════════════════════════════
+   13) WALL OF FAME (หน้า 4)
+   ════════════════════════════════════════════════════════════ */
+let fameTab = 'all';
+
+function saveWallEntry(entry){
+  if (BACKEND.mode === 'firebase'){ /* บันทึกไฟแบบ Firestore ทำใน uploadAndMakeQR แล้ว */ }
+  else if (BACKEND.mode === 'supabase'){ /* แทรกในตาราง photos แล้ว */ }
+  // local mode เก็บแถว meta ใน localStorage
+  try {
+    const wall = JSON.parse(localStorage.getItem('fos_wall_v1') || '[]');
+    wall.unshift(entry);
+    localStorage.setItem('fos_wall_v1', JSON.stringify(wall.slice(0, 60)));   // cap 60
+  } catch(e){ /* พื้นที่เต็มก็ยอมให้ผ่าน */ }
+}
+
+async function renderFame(){
+  let entries = [];
+  try {
+    if (USE_WORKER){
+      /* โหมด Sites: Wall ร่วมกันทุกเครื่อง, รูปจาก /files/<key> ของ Worker */
+      const r = await fetch(API_BASE + '/api/wall?limit=50');
+      const data = await r.json();
+      entries = (data.items || []).map(it => ({
+        id: it.id, name: it.name, band: it.band, genre: it.genre,
+        created_at: it.created_at,
+        image_url: API_BASE + (it.url || ('/files/' + it.file_key))
+      }));
+    } else if (BACKEND.mode === 'firebase'){
+      await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
+      await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js');
+      if (!firebase.apps.length) firebase.initializeApp(BACKEND.firebase);
+      const docs = await firebase.firestore().collection('photos')
+        .orderBy('created_at','desc').limit(50).get();
+      entries = docs.docs.map(d => d.data());
+    } else if (BACKEND.mode === 'supabase'){
+      await loadScript('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js');
+      const sb = window.supabase.createClient(BACKEND.supabase.url, BACKEND.supabase.key);
+      const r = await sb.from('photos').select('*').order('created_at', { ascending:false }).limit(50);
+      entries = r.data || [];
+    } else {
+      entries = JSON.parse(localStorage.getItem('fos_wall_v1') || '[]');
+    }
+
+  } catch(e){ entries = []; }
+  const list = entries.filter(e => fameTab === 'all' || e.genre === fameTab)
+    .sort((a,b) => (b.created_at||0) - (a.created_at||0));
+  const grid = document.getElementById('fameGrid'); grid.innerHTML = '';
+  document.getElementById('fameNote').textContent =
+    USE_WORKER
+      ? 'รูปจากคลาวด์ (cross-device) — สแกน QR เปิดได้ทุกเครื่อง'
+      : 'local mode — เก็บในเบราว์เซอร์นี้เท่านั้น (ตั้งค่า Firebase/Supabase เพื่อแชร์ข้ามเครื่อง)';
+
+  if (!list.length){ grid.innerHTML = '<p class="col-span-2 text-center text-white/60 py-10 text-sm">ยังไม่มีใครมาจองกรอบ… 🖼️</p>'; return; }
+  for (const e of list){
+    const card = document.createElement('button');
+    card.className = 'rounded-2xl overflow-hidden border-2 border-black bg-black/40 text-left';
+    card.innerHTML =
+      '<div class="aspect-square bg-black/30">' +
+        (e.thumb ? '<img src="'+e.thumb+'" class="w-full h-full object-cover">' :
+         e.image_url ? '<img src="'+e.image_url+'" class="w-full h-full object-cover">' : '<div class="grid place-items-center h-full text-3xl">🖼️</div>') +
+      '</div>' +
+      '<div class="px-2.5 py-2"><p class="text-sm font-bold truncate">' + esc(e.name||'') + '</p>' +
+      '<p class="text-[10px] opacity-70 truncate">' + esc(e.band||'') + '</p></div>';
+    card.onclick = async () => {
+      const srcImg = e.thumb || e.image_url;
+      document.getElementById('viewerImg').src = srcImg;
+      document.getElementById('viewerCap').textContent = (e.name||'') + ' — ' + (e.band||'');
+      document.getElementById('viewer').classList.remove('hidden');
+    };
+    grid.appendChild(card);
+  }
+}
+document.getElementById('viewerClose').onclick = () => document.getElementById('viewer').classList.add('hidden');
+
+function renderFameTabs(){
+  const tt = [['all','ทั้งหมด'],['pop','POP'],['indie','INDIE'],['rnb','R&B']];
+  document.getElementById('fameTabs').innerHTML = tt.map(([k,n]) =>
+    '<button data-f="' + k + '" class="btn text-xs ' + (fameTab === k ? 'btn-yellow' : 'btn-dark') + '">' + n + '</button>').join('');
+  document.querySelectorAll('#fameTabs button').forEach(b => b.onclick = () => { fameTab = b.dataset.f; renderFameTabs(); renderFame(); });
+}
+</script>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   14) BOOT เริ่มต้น: marquee + จุดเริ่ม
+   ════════════════════════════════════════════════════════════
+   ผู้ prefix '/download?id=' — หากคุณใช้ static host ที่กำหนด clean URL
+   จะสามารถกำหนดได้จาก/ลงชื่อ 'download.html?id=...'
+   แก้ QR จาก/dl: ใน Szx uploadAndMakeQR() ข้างในไฟล์นี้
+   ════════════════════════════════════════════════════════════ */
+renderFameTabs();
+document.getElementById('btnGoFame0').addEventListener('click', () => { setTheme(null); });
+</script>
+</body>
+</html>

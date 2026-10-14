@@ -1,0 +1,9 @@
+# ไฟล์ลับ — ห้ามอัปขึ้น GitHub เด็ดขาด
+media_token_secret.txt
+
+# ไฟล์ทดสอบ/ขยะ
+test_upload.jpg
+
+# ระบบ
+Thumbs.db
+.DS_Store

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FRAME OF SOUND — QR Sheet</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Kanit:wght@400;700;900&display=swap" rel="stylesheet" />
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<style>
+  body { font-family:'Kanit',sans-serif; margin:0; background:radial-gradient(900px 600px at 50% -10%, #3b1e7a 0%, #241052 50%, #14082e 100%); color:#fff; }
+  .display { font-family:'Archivo Black',sans-serif; }
+  .wrap { max-width:640px; margin:0 auto; padding:40px 20px; }
+  .card { background:rgba(255,255,255,.06); border:4px solid #000; border-radius:24px; padding:16px; margin-top:20px; }
+  .qrbox { width:220px; height:220px; margin:0 auto; background:#fff; padding:10px; border-radius:12px; }
+  .qrbox svg { width:100%; height:100%; }
+  .name { font-weight:900; font-size:20px; margin-top:10px; }
+  .meta { font-size:12px; opacity:.65; }
+  a.btn { display:block; text-align:center; margin-top:10px; background:#ffe14d; color:#121116; font-weight:700;
+          padding:10px; border-radius:12px; box-shadow:0 5px 0 #000; text-decoration:none; }
+  img.thumb { width:100%; border-radius:12px; display:block; }
+  .status { text-align:center; opacity:.7; font-size:14px; margin-top:16px; }
+  @media print { body { background:#fff; color:#000; } .card { border-color:#000; background:#fff; color:#000; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="./" style="font-size:11px;letter-spacing:.35em;opacity:.7">← FRAME OF SOUND</a>
+  <h1 class="display" style="font-size:32px;margin:8px 0 4px">QR <span style="color:#ffe14d">SHEET</span></h1>
+  <p style="font-size:13px;opacity:.7">สแกน QR แล้วกด Download รูปของเธอ — เก็บบนคลาวด์ ใช้ได้ทุกเครื่อง</p>
+  <div id="list"></div>
+  <div id="status" class="status">กำลังโหลดรูป…</div>
+</div>
+<script>
+(async () => {
+  const st = document.getElementById('status');
+  try {
+    const r = await fetch('/api/wall?limit=60');
+    const d = await r.json();
+    const items = d.items || [];
+    if (!items.length){ st.textContent = 'ยังไม่มีรูป'; return; }
+    st.textContent = '';
+    list.innerHTML = items.map((it, i) => `
+      <div class="card">
+        <img class="thumb" loading="lazy" src="${it.url}" alt="">
+        <div class="qrbox" id="qr${i}"></div>
+        <div class="name">${escapeHtml(it.name || '—')}</div>
+        <div class="meta">${escapeHtml(it.band || '')} · ${escapeHtml((it.genre || '').toUpperCase())}</div>
+        <a class="btn" href="./download.html?id=${encodeURIComponent(it.id)}&auto=1" target="_blank">สแกน/กด → โหลดรูปเลย</a>
+      </div>`).join('');
+    const base = location.origin + location.pathname.replace(/qr\.html.*$/, 'download.html');
+    items.forEach((it, i) => {
+      const qr = qrcode(0, 'M');
+      qr.addData(base + '?id=' + encodeURIComponent(it.id) + '&auto=1');
+      qr.make();
+      document.getElementById('qr' + i).innerHTML = qr.createSvgTag({ cellSize: 4, margin: 0 });
+    });
+  } catch(e){ st.textContent = 'โหลดไม่สำเร็จ: ' + e.message; }
+})();
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+</script>
+</body>
+</html>
